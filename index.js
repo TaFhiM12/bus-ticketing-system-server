@@ -15,7 +15,8 @@ const allowedOrigins = [
   "http://localhost:5174",
   "http://localhost:3000",
   "https://bus-ticketing-system-server-1.onrender.com",
-  "https://bus-ticketing-system-client-1.onrender.com"
+  "https://bus-ticketing-system-client-1.onrender.com",
+  "https://busvara.netlify.app"
 ];
 
 app.use(
