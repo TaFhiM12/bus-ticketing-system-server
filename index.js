@@ -342,6 +342,89 @@ async function initializeSchedules() {
 
 // ==================== API ENDPOINTS ====================
 
+
+// In your server.js, update the seat layout endpoint
+app.get("/api/buses/:id/seats", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid bus ID format" });
+    }
+    
+    const bus = await busesCollection.findOne({ _id: new ObjectId(id) });
+    if (!bus) {
+      return res.status(404).json({ error: "Bus not found" });
+    }
+    
+    // Generate seat layout as 2D array
+    const totalSeats = bus.totalSeats || 40;
+    const availableSeats = bus.availableSeats || totalSeats;
+    const rows = Math.ceil(totalSeats / 4);
+    const seatLayout = [];
+    
+    for (let row = 0; row < rows; row++) {
+      const rowSeats = [];
+      for (let col = 0; col < 4; col++) {
+        const seatNumber = row * 4 + col + 1;
+        if (seatNumber > totalSeats) break;
+        
+        const isBooked = seatNumber > (totalSeats - availableSeats);
+        const seatType = col === 0 || col === 3 ? 'window' : 'aisle';
+        
+        rowSeats.push({
+          seatNumber,
+          type: seatType,
+          status: isBooked ? 'booked' : 'available',
+          priceMultiplier: seatType === 'window' ? 1.1 : 1.0
+        });
+      }
+      if (rowSeats.length > 0) {
+        seatLayout.push(rowSeats);
+      }
+    }
+    
+    // Check for booked seats from database
+    const bookings = await bookingsCollection.find({
+      busId: id,
+      status: "confirmed"
+    }).toArray();
+    
+    const bookedSeats = bookings.flatMap(booking => 
+      booking.selectedSeats.map(seat => seat.seatNumber)
+    );
+    
+    // Update seat status based on bookings
+    seatLayout.forEach(row => {
+      row.forEach(seat => {
+        if (bookedSeats.includes(seat.seatNumber)) {
+          seat.status = 'booked';
+        }
+      });
+    });
+    
+    res.json({
+      success: true,
+      seatLayout: seatLayout,
+      busInfo: {
+        operator: bus.operator,
+        busNumber: bus.busNumber,
+        type: bus.type,
+        totalSeats: totalSeats,
+        availableSeats: availableSeats,
+        price: bus.price,
+        discountPrice: bus.discountPrice
+      }
+    });
+    
+  } catch (error) {
+    console.error("Seat layout error:", error);
+    res.status(500).json({ 
+      error: "Failed to fetch seat layout",
+      details: error.message 
+    });
+  }
+});
 app.post("/api/users/register", async (req, res) => {
   try {
     console.log("📥 Received registration request:", req.body);
