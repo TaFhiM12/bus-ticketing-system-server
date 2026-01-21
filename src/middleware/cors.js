@@ -7,7 +7,7 @@ const allowedOrigins = [
   "https://bus-ticketing-system-server-1.onrender.com",
   "https://bus-ticketing-system-client-1.onrender.com",
   "https://busvara.netlify.app",
-  "https://bus-ticketing-system-51ddb.web.app/"
+  "https://bus-ticketing-system-51ddb.web.app"
 ];
 
 const corsMiddleware = cors({
