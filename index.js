@@ -19,34 +19,16 @@ const allowedOrigins = [
   "https://busvara.netlify.app"
 ];
 
-// CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log("Blocked by CORS:", origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  optionsSuccessStatus: 200,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range']
-};
-
-// Apply CORS middleware BEFORE other middleware
-app.use(cors(corsOptions));
-
-// Handle preflight requests
-app.options('*', cors(corsOptions));
+app.use(
+  cors({
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
 
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // Enhanced Bus operators data
 const BUS_OPERATORS = [
@@ -142,7 +124,7 @@ const ALL_CITIES = [...new Set([
 ])];
 
 const uri = process.env.MONGODB_URI;
-let client, database, busesCollection, bookingsCollection, schedulesCollection;
+let client, database, busesCollection, bookingsCollection, schedulesCollection, usersCollection;
 
 async function connectToDatabase() {
   try {
@@ -159,6 +141,7 @@ async function connectToDatabase() {
     busesCollection = database.collection("buses");
     bookingsCollection = database.collection("bookings");
     schedulesCollection = database.collection("schedules");
+    usersCollection = database.collection("users");
     
     console.log("✅ Connected to MongoDB");
     return true;
@@ -358,6 +341,61 @@ async function initializeSchedules() {
 }
 
 // ==================== API ENDPOINTS ====================
+
+app.post("/api/users/register", async (req, res) => {
+  try {
+    console.log("📥 Received registration request:", req.body);
+    
+    const { uid, name, email, photoURL } = req.body;
+
+    if (!uid || !name || !email) {
+      return res.status(400).json({ 
+        success: false,
+        error: "UID, name, and email are required" 
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await usersCollection.findOne({ uid });
+
+    if (existingUser) {
+      return res.json({
+        success: true,
+        message: "User already exists",
+        user: existingUser,
+      });
+    }
+
+    const newUser = {
+      uid,
+      name,
+      email,
+      photoURL: photoURL || "",
+      role: "user",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await usersCollection.insertOne(newUser);
+    newUser._id = result.insertedId;
+
+    console.log("✅ User registered in MongoDB:", newUser.email);
+    
+    res.json({
+      success: true,
+      message: "User registered successfully",
+      user: newUser,
+    });
+  } catch (error) {
+    console.error("❌ Register error:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Registration failed", 
+      details: error.message 
+    });
+  }
+});
+
 
 // Health check endpoint
 app.get("/api/health", async (req, res) => {
