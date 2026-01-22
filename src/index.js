@@ -1,4 +1,3 @@
-// server.js
 import express from "express";
 import dotenv from "dotenv";
 import cron from "node-cron";
@@ -43,6 +42,8 @@ const io = new Server(httpServer, {
 
 // Store active seat selection sessions
 const activeSessions = new Map();
+// Map socket.id to userId for easier tracking
+const socketUserMap = new Map();
 
 // Middleware
 app.use(corsMiddleware);
@@ -160,7 +161,7 @@ function getSelectedByOthers(busId, socketId) {
       seats.forEach(seat => {
         othersSelections.push({
           ...seat,
-          userId: otherSocketId.substring(0, 8)
+          userId: socketUserMap.get(otherSocketId) || otherSocketId.substring(0, 8)
         });
       });
     }
@@ -168,12 +169,37 @@ function getSelectedByOthers(busId, socketId) {
   return othersSelections;
 }
 
-// Clean up expired selections
-function cleanupExpiredSelections() {
+// Clean up expired selections and notify clients
+function cleanupExpiredSelectionsAndNotify() {
   const now = new Date();
+  const expiredSeatsByBus = new Map(); // busId -> [seatNumbers]
+  const expiredSeatsByUser = new Map(); // socketId -> [{busId, seatNumber}]
+
   for (const [busId, session] of activeSessions.entries()) {
     for (const [socketId, seats] of session.selectedSeats.entries()) {
       const validSeats = seats.filter(seat => new Date(seat.expiresAt) > now);
+      const expiredSeats = seats.filter(seat => new Date(seat.expiresAt) <= now);
+      
+      // Track expired seats
+      if (expiredSeats.length > 0) {
+        // Add to bus expired seats
+        if (!expiredSeatsByBus.has(busId)) {
+          expiredSeatsByBus.set(busId, []);
+        }
+        expiredSeatsByBus.get(busId).push(
+          ...expiredSeats.map(s => s.seatNumber)
+        );
+        
+        // Add to user expired seats
+        if (!expiredSeatsByUser.has(socketId)) {
+          expiredSeatsByUser.set(socketId, []);
+        }
+        expiredSeatsByUser.get(socketId).push(
+          ...expiredSeats.map(s => ({ busId, seatNumber: s.seatNumber }))
+        );
+      }
+      
+      // Update session with valid seats
       if (validSeats.length === 0) {
         session.selectedSeats.delete(socketId);
       } else {
@@ -186,14 +212,48 @@ function cleanupExpiredSelections() {
       activeSessions.delete(busId);
     }
   }
+
+  // Notify all clients in bus rooms about expired seats
+  expiredSeatsByBus.forEach((seats, busId) => {
+    io.to(`bus:${busId}`).emit('seats-expired', {
+      seats,
+      message: 'Seat selections have expired',
+      busId
+    });
+  });
+
+  // Notify individual users about their expired seats
+  expiredSeatsByUser.forEach((expiredSeats, socketId) => {
+    const socket = io.sockets.sockets.get(socketId);
+    if (socket) {
+      expiredSeats.forEach(({ busId, seatNumber }) => {
+        socket.emit('your-seat-expired', {
+          seatNumber,
+          busId,
+          message: 'Your seat selection has expired'
+        });
+        
+        // Also notify others in the room
+        socket.to(`bus:${busId}`).emit('seat-deselected', {
+          seatNumber,
+          message: 'Seat selection expired'
+        });
+      });
+    }
+  });
 }
 
-// Run cleanup every 30 seconds
-setInterval(cleanupExpiredSelections, 30000);
+// Run cleanup every 5 seconds
+setInterval(cleanupExpiredSelectionsAndNotify, 5000);
 
 // Socket.io connection handling
 io.on("connection", (socket) => {
   console.log(`🔄 Socket connected: ${socket.id}`);
+
+  // Track user mapping
+  socket.on("register-user", ({ userId }) => {
+    socketUserMap.set(socket.id, userId || 'anonymous');
+  });
 
   // Join a bus room for seat selection
   socket.on("join-bus", async ({ busId, userId }) => {
@@ -210,6 +270,9 @@ io.on("connection", (socket) => {
         socket.emit("error", { message: "Bus not found" });
         return;
       }
+
+      // Store user mapping
+      socketUserMap.set(socket.id, userId || 'anonymous');
 
       // Join bus room
       socket.join(`bus:${busId}`);
@@ -264,15 +327,30 @@ io.on("connection", (socket) => {
       const othersSelection = selectedByOthers.find(s => s.seatNumber === seatNumber);
       
       if (othersSelection) {
-        const timeDiff = (now - new Date(othersSelection.selectedAt)) / (1000 * 60);
-        if (timeDiff < 2) {
+        const selectedTime = new Date(othersSelection.selectedAt);
+        const timeDiff = (now - selectedTime) / 1000; // in seconds
+        
+        if (timeDiff < 120) {
           socket.emit("seat-locked", { 
             seatNumber,
             message: "Seat is being selected by another user",
             userId: othersSelection.userId,
-            timeLeft: Math.ceil(120 - timeDiff * 60)
+            timeLeft: Math.ceil(120 - timeDiff)
           });
           return;
+        } else {
+          // Seat selection has expired, allow current user to select
+          // Remove expired selection from the other user
+          for (const [otherSocketId, seats] of session.selectedSeats.entries()) {
+            if (otherSocketId !== socket.id) {
+              const updatedSeats = seats.filter(s => s.seatNumber !== seatNumber);
+              session.selectedSeats.set(otherSocketId, updatedSeats);
+              
+              if (updatedSeats.length === 0) {
+                session.selectedSeats.delete(otherSocketId);
+              }
+            }
+          }
         }
       }
 
@@ -286,17 +364,19 @@ io.on("connection", (socket) => {
         const existingSeatIndex = userSeats.findIndex(s => s.seatNumber === seatNumber);
         
         if (existingSeatIndex === -1) {
-          userSeats.push({
+          const seatData = {
             seatNumber,
             selectedAt: now,
             expiresAt: new Date(now.getTime() + 2 * 60 * 1000), // 2 minutes
-            userId: userId || socket.id.substring(0, 8)
-          });
+            userId: userId || socketUserMap.get(socket.id) || socket.id.substring(0, 8)
+          };
+          
+          userSeats.push(seatData);
           
           // Broadcast to others in the same bus room
           socket.to(`bus:${busId}`).emit("seat-selected", {
             seatNumber,
-            selectedBy: userId || socket.id.substring(0, 8),
+            selectedBy: seatData.userId,
             selectedAt: now,
             expiresIn: 120 // seconds
           });
@@ -312,6 +392,10 @@ io.on("connection", (socket) => {
           const userSeats = session.selectedSeats.get(socket.id);
           const updatedSeats = userSeats.filter(s => s.seatNumber !== seatNumber);
           session.selectedSeats.set(socket.id, updatedSeats);
+          
+          if (updatedSeats.length === 0) {
+            session.selectedSeats.delete(socket.id);
+          }
           
           // Broadcast seat release
           socket.to(`bus:${busId}`).emit("seat-deselected", {
@@ -375,6 +459,48 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle user seat expiry notification
+  socket.on("user-seat-expired", ({ busId, seatNumber }) => {
+    try {
+      const session = activeSessions.get(busId);
+      if (session && session.selectedSeats.has(socket.id)) {
+        const userSeats = session.selectedSeats.get(socket.id);
+        const updatedSeats = userSeats.filter(s => s.seatNumber !== seatNumber);
+        
+        if (updatedSeats.length === 0) {
+          session.selectedSeats.delete(socket.id);
+        } else {
+          session.selectedSeats.set(socket.id, updatedSeats);
+        }
+        
+        // Notify others that seat is available
+        socket.to(`bus:${busId}`).emit("seat-deselected", {
+          seatNumber,
+          message: "Seat selection expired"
+        });
+      }
+    } catch (error) {
+      console.error("User seat expiry error:", error);
+    }
+  });
+
+  // Handle seat selection refresh
+  socket.on("refresh-seat-selection", ({ busId }) => {
+    try {
+      const session = activeSessions.get(busId);
+      if (session) {
+        const selectedByOthers = getSelectedByOthers(busId, socket.id);
+        socket.emit("seat-status-update", {
+          busId,
+          bookedSeats: [],
+          selectedByOthers
+        });
+      }
+    } catch (error) {
+      console.error("Refresh seat selection error:", error);
+    }
+  });
+
   // Handle disconnect
   socket.on("disconnect", () => {
     console.log(`🔌 Socket disconnected: ${socket.id}`);
@@ -394,6 +520,9 @@ io.on("connection", (socket) => {
         }
       }
     }
+    
+    // Remove user mapping
+    socketUserMap.delete(socket.id);
   });
 
   // Leave bus room
