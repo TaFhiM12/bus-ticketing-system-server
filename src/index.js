@@ -126,7 +126,7 @@ setInterval(cleanupExpiredSelections, 30000);
 
 // Socket.io connection handling
 io.on("connection", (socket) => {
-  console.log(`🔄 Socket connected: ${socket.id}`);
+  // console.log(`🔄 Socket connected: ${socket.id}`);
 
   // Join a bus room for seat selection
   socket.on("join-bus", async ({ busId, userId }) => {
@@ -146,7 +146,7 @@ io.on("connection", (socket) => {
 
       // Join bus room
       socket.join(`bus:${busId}`);
-      console.log(`👤 Socket ${socket.id} (User: ${userId}) joined bus:${busId}`);
+      // console.log(`👤 Socket ${socket.id} (User: ${userId}) joined bus:${busId}`);
 
       // Initialize session if not exists
       if (!activeSessions.has(busId)) {
@@ -310,7 +310,7 @@ io.on("connection", (socket) => {
 
   // Handle disconnect
   socket.on("disconnect", () => {
-    console.log(`🔌 Socket disconnected: ${socket.id}`);
+    // console.log(`🔌 Socket disconnected: ${socket.id}`);
     
     // Clean up user's selections from all sessions
     for (const [busId, session] of activeSessions.entries()) {
@@ -332,7 +332,7 @@ io.on("connection", (socket) => {
   // Leave bus room
   socket.on("leave-bus", ({ busId }) => {
     socket.leave(`bus:${busId}`);
-    console.log(`👋 Socket ${socket.id} left bus:${busId}`);
+    // console.log(`👋 Socket ${socket.id} left bus:${busId}`);
   });
 });
 
@@ -350,7 +350,7 @@ async function startServer() {
     
     // Set up cron job for daily maintenance
     cron.schedule('0 3 * * *', async () => {
-      console.log("🔄 Running daily maintenance...");
+      // console.log("🔄 Running daily maintenance...");
       await cleanupOldBuses();
       
       // Generate schedules for 7 days ahead
@@ -362,9 +362,9 @@ async function startServer() {
     // Start server
     httpServer.listen(PORT, () => {
       console.log(`✅ Server running on port ${PORT}`);
-      console.log(`🌐 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`🔧 Test endpoint: http://localhost:${PORT}/api/test`);
-      console.log(`🔌 Socket.io running on port ${PORT}`);
+      // console.log(`🌐 Health check: http://localhost:${PORT}/api/health`);
+      // console.log(`🔧 Test endpoint: http://localhost:${PORT}/api/test`);
+      // console.log(`🔌 Socket.io running on port ${PORT}`);
     });
     
   } catch (error) {
@@ -375,12 +375,12 @@ async function startServer() {
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('🛑 Shutting down server...');
+  // console.log('🛑 Shutting down server...');
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('🛑 Terminating server...');
+  // console.log('🛑 Terminating server...');
   process.exit(0);
 });
 

@@ -130,7 +130,7 @@ export async function generateDailySchedules(date) {
       }));
       
       const result = await busesCollection.insertMany(busesToInsert);
-      console.log(`✅ Generated ${result.insertedCount} buses for ${scheduleDate.toDateString()}`);
+      // console.log(`✅ Generated ${result.insertedCount} buses for ${scheduleDate.toDateString()}`);
     }
     
   } catch (error) {
@@ -173,7 +173,7 @@ export async function initializeSchedules() {
     console.log(`📊 Current stats - Schedules: ${scheduleCount}, Buses: ${busCount}`);
     
     if (busCount === 0) {
-      console.log("🔄 Initializing schedules for next 7 days...");
+      // console.log("🔄 Initializing schedules for next 7 days...");
       
       for (let i = 0; i < 7; i++) {
         const date = new Date(today);
@@ -181,7 +181,7 @@ export async function initializeSchedules() {
         await generateDailySchedules(date);
       }
       
-      console.log("✅ Schedules initialized successfully");
+      // console.log("✅ Schedules initialized successfully");
     }
   } catch (error) {
     console.error("Error initializing schedules:", error);

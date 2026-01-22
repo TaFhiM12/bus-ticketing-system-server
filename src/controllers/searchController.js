@@ -187,7 +187,7 @@ export const getSearchSuggestions = async (req, res) => {
       ).map(op => ({ type: "operator", value: op }));
       
     } catch (dbError) {
-      console.log("Using fallback suggestions:", dbError.message);
+      // console.log("Using fallback suggestions:", dbError.message);
       // Fallback to static data if database query fails
       citySuggestions = ALL_CITIES.filter(city => 
         city.toLowerCase().includes(searchTerm)

@@ -31,7 +31,7 @@ export async function connectToDatabase() {
     schedulesCollection = db.collection("schedules");
     usersCollection = db.collection("users");
     
-    console.log("✅ Connected to MongoDB");
+    // console.log("✅ Connected to MongoDB");
     return true;
   } catch (error) {
     console.error("❌ MongoDB connection error:", error);

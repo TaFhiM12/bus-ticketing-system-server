@@ -46,7 +46,7 @@ export const registerUser = async (req, res) => {
     const result = await usersCollection.insertOne(newUser);
     newUser._id = result.insertedId;
 
-    console.log("✅ User registered in MongoDB:", newUser.email);
+    // console.log("✅ User registered in MongoDB:", newUser.email);
     
     res.json({
       success: true,
