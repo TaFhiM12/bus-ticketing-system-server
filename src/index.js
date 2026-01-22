@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import dotenv from "dotenv";
 import cron from "node-cron";
@@ -10,9 +11,12 @@ import bookingRoutes from "./routes/bookingRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
-import socketRoutes from "./routes/socketRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
-import { initializeSchedules, cleanupOldBuses, generateDailySchedules } from "./services/schedulingService.js";
+import { 
+  initializeSchedules, 
+  dailyMaintenance,
+  generateDailySchedules 
+} from "./services/schedulingService.js";
 import { getBusesCollection, getBookingsCollection } from "./config/database.js";
 import { ObjectId } from "mongodb";
 
@@ -50,8 +54,6 @@ app.use("/api/bookings", bookingRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/socket", socketRoutes);
-app.use("/api/socket", socketRoutes);
 app.use("/api", healthRoutes);
 
 // Root endpoint
@@ -62,6 +64,71 @@ app.get("/", (req, res) => {
     description: "Professional bus ticketing system with dynamic scheduling",
     documentation: "https://github.com/your-repo/docs"
   });
+});
+
+// Auto-generation endpoints
+app.post("/api/generate-for-date", async (req, res) => {
+  try {
+    const { date } = req.body;
+    
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        error: "Date is required"
+      });
+    }
+    
+    const targetDate = new Date(date);
+    targetDate.setHours(0, 0, 0, 0);
+    
+    console.log(`Generating schedules for ${targetDate.toDateString()}...`);
+    
+    const busesGenerated = await generateDailySchedules(targetDate);
+    
+    res.json({
+      success: true,
+      message: `Generated ${busesGenerated} buses for ${targetDate.toDateString()}`,
+      date: targetDate.toISOString(),
+      busesGenerated
+    });
+    
+  } catch (error) {
+    console.error("Generate for date error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to generate schedules"
+    });
+  }
+});
+
+// Manual trigger for daily maintenance
+app.post("/api/admin/daily-maintenance", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_TOKEN}`) {
+      return res.status(401).json({ 
+        success: false,
+        error: "Unauthorized" 
+      });
+    }
+    
+    const result = await dailyMaintenance();
+    
+    res.json({
+      success: true,
+      message: "Daily maintenance completed",
+      result
+    });
+    
+  } catch (error) {
+    console.error("Manual maintenance error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Maintenance failed",
+      details: error.message
+    });
+  }
 });
 
 // Helper function to get booked seats
@@ -126,7 +193,7 @@ setInterval(cleanupExpiredSelections, 30000);
 
 // Socket.io connection handling
 io.on("connection", (socket) => {
-  // console.log(`🔄 Socket connected: ${socket.id}`);
+  console.log(`🔄 Socket connected: ${socket.id}`);
 
   // Join a bus room for seat selection
   socket.on("join-bus", async ({ busId, userId }) => {
@@ -146,7 +213,7 @@ io.on("connection", (socket) => {
 
       // Join bus room
       socket.join(`bus:${busId}`);
-      // console.log(`👤 Socket ${socket.id} (User: ${userId}) joined bus:${busId}`);
+      console.log(`👤 Socket ${socket.id} (User: ${userId}) joined bus:${busId}`);
 
       // Initialize session if not exists
       if (!activeSessions.has(busId)) {
@@ -310,7 +377,7 @@ io.on("connection", (socket) => {
 
   // Handle disconnect
   socket.on("disconnect", () => {
-    // console.log(`🔌 Socket disconnected: ${socket.id}`);
+    console.log(`🔌 Socket disconnected: ${socket.id}`);
     
     // Clean up user's selections from all sessions
     for (const [busId, session] of activeSessions.entries()) {
@@ -332,39 +399,85 @@ io.on("connection", (socket) => {
   // Leave bus room
   socket.on("leave-bus", ({ busId }) => {
     socket.leave(`bus:${busId}`);
-    // console.log(`👋 Socket ${socket.id} left bus:${busId}`);
+    console.log(`👋 Socket ${socket.id} left bus:${busId}`);
   });
 });
 
 async function startServer() {
   try {
     // Connect to database
+    console.log("🔗 Connecting to database...");
     const connected = await connectToDatabase();
     if (!connected) {
       console.error("❌ Failed to connect to database. Exiting...");
       process.exit(1);
     }
     
+    console.log("✅ Database connected successfully");
+    
     // Initialize schedules
+    console.log("🔄 Initializing schedules...");
     await initializeSchedules();
     
-    // Set up cron job for daily maintenance
+    // Set up cron job for daily maintenance at 3:00 AM every day
     cron.schedule('0 3 * * *', async () => {
-      // console.log("🔄 Running daily maintenance...");
-      await cleanupOldBuses();
-      
-      // Generate schedules for 7 days ahead
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 7);
-      await generateDailySchedules(tomorrow);
+      console.log("⏰ Running scheduled daily maintenance...");
+      try {
+        const result = await dailyMaintenance();
+        console.log("✅ Daily maintenance completed successfully");
+        console.log(`   🧹 Cleaned: ${result.cleaned} old buses`);
+        console.log(`   🚌 Generated: ${result.generated} new buses`);
+        console.log(`   📅 Filled: ${result.filled} missing days`);
+      } catch (error) {
+        console.error("❌ Daily maintenance failed:", error);
+      }
+    });
+    
+    // Also run check every 6 hours as backup
+    cron.schedule('0 */6 * * *', async () => {
+      console.log("🔄 Running 6-hour schedule check...");
+      try {
+        const busesCollection = getBusesCollection();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Check next 3 days
+        let missingDays = 0;
+        for (let i = 0; i < 3; i++) {
+          const checkDate = new Date(today);
+          checkDate.setDate(today.getDate() + i);
+          
+          const dateBuses = await busesCollection.countDocuments({
+            scheduleDate: checkDate
+          });
+          
+          if (dateBuses === 0) {
+            console.log(`📅 No buses for ${checkDate.toDateString()}, generating...`);
+            await generateDailySchedules(checkDate);
+            missingDays++;
+          }
+        }
+        
+        if (missingDays > 0) {
+          console.log(`✅ Filled ${missingDays} missing days`);
+        }
+      } catch (error) {
+        console.error("6-hour check error:", error);
+      }
     });
     
     // Start server
     httpServer.listen(PORT, () => {
-      console.log(`✅ Server running on port ${PORT}`);
-      // console.log(`🌐 Health check: http://localhost:${PORT}/api/health`);
-      // console.log(`🔧 Test endpoint: http://localhost:${PORT}/api/test`);
-      // console.log(`🔌 Socket.io running on port ${PORT}`);
+      console.log(`\n✅ Server running on port ${PORT}`);
+      console.log("🌐 Server URL: http://localhost:" + PORT);
+      console.log("\n⏰ Daily maintenance scheduled at 3:00 AM every day");
+      console.log("🔄 6-hour schedule check also enabled");
+      console.log("\n📊 Available endpoints:");
+      console.log("   • POST /api/generate-for-date - Generate buses for specific date");
+      console.log("   • POST /api/admin/daily-maintenance - Manual maintenance trigger");
+      console.log("   • GET /api/buses - Get all buses");
+      console.log("   • POST /api/buses/search - Search buses");
+      console.log("\n🚀 Ready to accept bus searches!");
     });
     
   } catch (error) {
@@ -375,12 +488,12 @@ async function startServer() {
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-  // console.log('🛑 Shutting down server...');
+  console.log('\n🛑 Shutting down server gracefully...');
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  // console.log('🛑 Terminating server...');
+  console.log('\n🛑 Terminating server...');
   process.exit(0);
 });
 
