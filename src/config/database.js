@@ -64,3 +64,13 @@ export function getUsersCollection() {
 export function getClient() {
   return client;
 }
+
+// Get all collections
+export function getAllCollections() {
+  return {
+    busesCollection,
+    bookingsCollection,
+    schedulesCollection,
+    usersCollection
+  };
+}
